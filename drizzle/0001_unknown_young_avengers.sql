@@ -1,0 +1,1 @@
+ALTER TABLE `enquiries` ADD `last_attempt` text;

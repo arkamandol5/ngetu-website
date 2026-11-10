@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const base='http://127.0.0.1:4174';
+// Run only against the local DEV build with LOCAL_TEST_INTAKE=true.
+let cookie='';const results=[];
+async function req(path,{body,auth=true,origin=base,method=body?'POST':'GET',headers={}}={}){const r=await fetch(base+path,{method,headers:{...(auth&&cookie?{Cookie:cookie}:{}),...(method==='POST'?{Origin:origin}:{}),...(body&&!(body instanceof FormData)?{'Content-Type':'application/json'}:{}),...headers},...(body?{body:body instanceof FormData?body:JSON.stringify(body)}:{})});const type=r.headers.get('content-type')||'';return {status:r.status,body:type.includes('json')?await r.json():await r.text(),headers:r.headers};}
+async function check(name,fn){await fn();results.push(name);console.log('PASS '+name);}
+await check('anonymous management access denied',async()=>assert.equal((await req('/api/admin/leads',{auth:false})).status,401));
+await check('spoofed identity headers rejected by local platform boundary',async()=>assert.equal((await req('/api/admin/bootstrap',{auth:false,headers:{'oai-authenticated-user-id':'local_seedy','oai-authenticated-user-email':'seedy@sites.test'}})).status,401));
+const sign=await fetch(base+'/signin-with-chatgpt?return_to=/admin/',{redirect:'manual'});cookie=sign.headers.get('set-cookie').split(';')[0];
+await check('authorised management sign-in works',async()=>{const r=await req('/api/admin/bootstrap');assert.equal(r.status,200);assert.equal(r.body.user.role,'admin');assert.ok(r.body.pages.some(x=>x.slug==='home'));});
+await check('cross-origin write denied',async()=>assert.equal((await req('/api/admin/test-enquiry',{body:{},origin:'https://example.org'})).status,403));
+await check('HTML form fallback uses POST and rejects non-JSON without receipt',async()=>{const r=await fetch(base+'/api/enquiries',{method:'POST',headers:{Origin:base,'Content-Type':'application/x-www-form-urlencoded'},body:'name=Fictional+Test'});assert.equal(r.status,400);assert.match((await r.json()).message,/No information was accepted/);});
+const boot=(await req('/api/admin/bootstrap')).body;const original=boot.settings;
+await check('live intake is initially off',async()=>assert.equal((await req('/api/config',{auth:false})).body.intakeEnabled,false));
+await check('launch settings guard incomplete identity/privacy',async()=>assert.equal((await req('/api/admin/settings',{body:{...original,intakeEnabled:true}})).status,400));
+const settings={...original,legalName:'Fictional QA entity',email:'audit@example.com',privacyEmail:'audit@example.com',privacyApproved:true,inboxMonitored:true,intakeEnabled:true};
+await check('local-only isolated test intake can be enabled',async()=>assert.equal((await req('/api/admin/settings',{body:settings})).status,200));
+const lead={name:'Audit Test',company:'Fictional company',email:'audit@example.com',phone:'+27 82 123 4567',province:'Gauteng',industry:'Bodyshop',interest:'Sagola equipment',contactMethod:'WhatsApp',goal:'Fictional integration test',action:'assessment',requestId:crypto.randomUUID(),privacyAcknowledged:true,sourcePage:'/sagola/',campaign:{utm_campaign:'integration-test'},deviceClass:'desktop',mode:'live'};let receipt;
+await check('public enquiry persists and returns reference',async()=>{const r=await req('/api/enquiries',{body:lead,auth:false});assert.equal(r.status,201);assert.match(r.body.reference,/^NG-/);receipt=r.body.reference;});
+await check('retry with same id does not create duplicate',async()=>{const r=await req('/api/enquiries',{body:lead,auth:false});assert.equal(r.status,200);assert.equal(r.body.reference,receipt);});
+await check('same request id with changed personal data rejected',async()=>assert.equal((await req('/api/enquiries',{body:{...lead,name:'Different'},auth:false})).status,409));
+await check('punctuation-only phone rejected through endpoint',async()=>assert.equal((await req('/api/enquiries',{body:{...lead,requestId:crypto.randomUUID(),phone:'-------'},auth:false})).status,400));
+await check('security acknowledgement enforced through endpoint',async()=>assert.equal((await req('/api/enquiries',{body:{...lead,requestId:crypto.randomUUID(),interest:'Cybersecurity'},auth:false})).status,400));
+await check('rate limit rejects further attempts',async()=>assert.equal((await req('/api/enquiries',{body:{...lead,requestId:crypto.randomUUID()},auth:false})).status,429));
+let records=(await req('/api/admin/leads')).body;const stored=records.find(x=>x.reference===receipt);
+await check('inbox contains actual received data and preserved campaign',async()=>{assert.equal(stored.payload.campaign.utm_campaign,'integration-test');assert.equal(stored.test,1);assert.equal(stored.crm_status,'test');assert.equal(records.filter(x=>x.reference===receipt).length,1);});
+await check('follow-up stage, owner and date persist',async()=>{const r=await req('/api/admin/leads',{body:{id:stored.id,status:'Qualified',owner:'QA owner',nextAction:'2026-11-01'}});assert.equal(r.status,200);const x=(await req('/api/admin/leads')).body.find(x=>x.id===stored.id);assert.equal(x.status,'Qualified');assert.equal(x.next_action,'2026-11-01');});
+const slug='qa-editor-check',doc={title:'QA editor check',headline:'Draft content check',description:'Fictional local test article.',eyebrow:'Insights / Business',blocks:[['A test section','Not customer-facing content.',['One test item']]],media:'',mediaAlt:'',mediaCaption:''};
+let version=0;const previous=await req('/api/admin/content?slug='+slug);if(previous.status===200)version=previous.body.revision;
+await check('CMS draft saves with revision',async()=>{const r=await req('/api/admin/content?slug='+slug,{body:{document:doc,revision:version,publish:false}});assert.equal(r.status,200);version=r.body.revision;});
+await check('unpublished page remains absent publicly',async()=>assert.equal((await req('/'+slug,{auth:false})).status,404));
+await check('draft preview requires authorisation',async()=>assert.equal((await req('/'+slug+'?preview=draft',{auth:false})).status,403));
+await check('editor can preview draft',async()=>{const r=await req('/'+slug+'?preview=draft');assert.equal(r.status,200);assert.match(r.body,/Draft content check/);});
+await check('stale revision cannot overwrite a draft',async()=>assert.equal((await req('/api/admin/content?slug='+slug,{body:{document:doc,revision:version-1,publish:false}})).status,409));
+await check('publish creates a public article',async()=>{const r=await req('/api/admin/content?slug='+slug,{body:{document:doc,revision:version,publish:true}});assert.equal(r.status,200);version=r.body.revision;assert.equal((await req('/'+slug,{auth:false})).status,200);});
+await check('published article is discoverable in search and insights',async()=>{assert.ok((await req('/api/search',{auth:false})).body.some(x=>x.url==='/'+slug+'/'));assert.match((await req('/insights',{auth:false})).body,/QA editor check/);});
+await check('revision history is retained',async()=>assert.ok((await req('/api/admin/revisions?slug='+slug)).body.length>=2));
+await check('unpublish removes new article from public routes',async()=>{assert.equal((await req('/api/admin/unpublish',{body:{slug}})).status,200);assert.equal((await req('/'+slug,{auth:false})).status,404);});
+await check('script-bearing SVG upload rejected',async()=>{const form=new FormData();form.set('file',new File(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],'unsafe.svg',{type:'image/svg+xml'}));form.set('rights','Fictional test only');assert.equal((await req('/api/admin/assets',{body:form})).status,400);});
+await check('clean vector asset stores and serves with nosniff',async()=>{const form=new FormData();form.set('file',new File(['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect x="2" y="2" width="16" height="16" fill="#176b42"/></svg>'],'qa-only.svg',{type:'image/svg+xml'}));form.set('rights','Original local QA graphic, not a partner logo');const r=await req('/api/admin/assets',{body:form});assert.equal(r.status,200);const asset=await req(r.body.url,{auth:false});assert.equal(asset.status,200);assert.equal(asset.headers.get('x-content-type-options'),'nosniff');});
+await check('public pages retain noindex before launch',async()=>assert.equal((await req('/automotive',{auth:false})).headers.get('x-robots-tag'),'noindex,nofollow'));
+await check('optional event accepts only bounded non-personal payload',async()=>{assert.equal((await req('/api/events',{body:{event:'page',path:'/automotive'},auth:false})).status,200);assert.equal((await req('/api/events',{body:{event:'page',path:'/review?email=private@example.com'},auth:false})).status,400);});
+await check('backup includes required data tables',async()=>{const r=await req('/api/admin/export');assert.equal(r.status,200);assert.ok(r.body.enquiries.some(x=>x.reference===receipt));fs.writeFileSync('/private/tmp/ngetu-test-backup.json',JSON.stringify(r.body),{mode:0o600});});
+await check('restore safe default configuration',async()=>assert.equal((await req('/api/admin/settings',{body:original})).status,200));
+fs.mkdirSync('../analysis/implementation-2026-10-28',{recursive:true});fs.writeFileSync('../analysis/implementation-2026-10-28/api-tests.json',JSON.stringify({testedAt:new Date().toISOString(),mode:'local-only fictional data, no outbound CRM',passed:results.length,checks:results},null,2));
+console.log(results.length+' integration checks passed. No external messages or CRM requests.');

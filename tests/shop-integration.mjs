@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const base='http://127.0.0.1:4174';let cookie='';const checks=[];
+async function req(path,body,auth=true,origin=base){const r=await fetch(base+path,{method:body?'POST':'GET',headers:{...(auth&&cookie?{Cookie:cookie}:{}),...(body?{Origin:origin,'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:r.headers.get('content-type')?.includes('json')?await r.json():await r.text(),headers:r.headers};}
+async function check(name,fn){await fn();checks.push(name);console.log('PASS '+name);}
+await check('anonymous catalogue management denied',async()=>assert.equal((await req('/api/admin/catalogue')).status,401));
+await check('public catalogue exposes no private configuration',async()=>{const r=await req('/api/catalogue');assert.equal(r.status,200);assert.deepEqual(Object.keys(r.data).sort(),['products','revision']);});
+const sign=await fetch(base+'/signin-with-chatgpt?return_to=/admin/',{redirect:'manual'});cookie=sign.headers.get('set-cookie').split(';')[0];
+const settings=(await req('/api/admin/bootstrap')).data.settings,original=(await req('/api/admin/catalogue')).data;
+let current=original.revision;
+const item={...original.products[0],id:'sagola-qa-product',name:'Fictional QA <script> product',kind:'product',sku:'QA-TEST',priceCents:12500,tax:'incl',published:true};
+try{
+ await check('cross-origin catalogue mutation denied',async()=>assert.equal((await req('/api/admin/catalogue',{revision:current,products:[]},true,'https://evil.test')).status,403));
+ await check('catalogue rejects malformed prices',async()=>assert.equal((await req('/api/admin/catalogue',{revision:current,products:[{...item,priceCents:-10}]})).status,400));
+ await check('catalogue persists with revision',async()=>{const r=await req('/api/admin/catalogue',{revision:current,products:[...original.products,item,{...item,id:'sagola-qa-hidden',published:false}]});assert.equal(r.status,200);current=r.data.revision;});
+ await check('stale catalogue writes rejected',async()=>assert.equal((await req('/api/admin/catalogue',{revision:current-1,products:[]})).status,409));
+ await check('public catalogue omits hidden products',async()=>{const p=(await req('/api/catalogue')).data.products;assert.ok(p.some(x=>x.id===item.id));assert.ok(!p.some(x=>x.id==='sagola-qa-hidden'));});
+ await check('product detail server renders safe HTML and security headers',async()=>{const r=await req('/sagola-shop/'+item.id+'/');assert.equal(r.status,200);assert.match(r.data,/Fictional QA &lt;script&gt; product/);assert.equal((r.data.match(/<h1[ >]/g)||[]).length,1);assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal((await req('/sagola-shop/sagola-qa-hidden/')).status,404);});
+ await check('live quote intake off before approval',async()=>assert.equal((await req('/api/enquiries',{action:'quote',mode:'live'},false)).status,503));
+ const c=await req('/api/admin/settings',{...settings,legalName:'Fictional local QA',privacyEmail:'qa@example.com',email:'qa@example.com',privacyApproved:true,inboxMonitored:true,intakeEnabled:true});assert.equal(c.status,200,'Run only with LOCAL_TEST_INTAKE=true');
+ const lead={name:'Store QA',company:'Fictional test company',email:'qa@example.com',phone:'',province:'Gauteng',industry:'Bodyshop',interest:'Sagola equipment',action:'quote',contactMethod:'Email',goal:'Fictional local test — do not deliver',requestId:crypto.randomUUID(),privacyAcknowledged:true,sourcePage:'/sagola-shop/',mode:'live',items:[{id:item.id,quantity:2,unitPriceCents:1,name:'FORGED',configuration:'1.3 mm'}]};let receipt;
+ await check('quote persists server-authoritative product snapshot',async()=>{const r=await req('/api/enquiries',lead,false);assert.equal(r.status,201);receipt=r.data.reference;const row=(await req('/api/admin/leads')).data.find(x=>x.reference===receipt);assert.equal(row.test,1);assert.equal(row.crm_status,'test');assert.equal(row.payload.quoteItems[0].unitPriceCents,12500);assert.equal(row.payload.quoteItems[0].lineTotalCents,25000);assert.equal(row.payload.quoteItems[0].name,item.name);assert.equal(row.payload.quoteType,'request_for_quotation');});
+ await check('identical quote retry returns same reference',async()=>{const r=await req('/api/enquiries',lead,false);assert.equal(r.status,200);assert.equal(r.data.reference,receipt);});
+ await check('hidden product quote rejected',async()=>assert.equal((await req('/api/enquiries',{...lead,requestId:crypto.randomUUID(),items:[{id:'sagola-qa-hidden',quantity:1}]},false)).status,400));
+ await check('specific unlisted request accepted',async()=>assert.equal((await req('/api/enquiries',{...lead,requestId:crypto.randomUUID(),items:[]},false)).status,201));
+ await check('backup includes catalogue and quote snapshots',async()=>{const r=await req('/api/admin/export');assert.ok(r.data.settings.some(x=>x.key==='catalogue'));assert.ok(r.data.enquiries.some(x=>x.reference===receipt));});
+}finally{const c=await req('/api/admin/catalogue');const restored=await req('/api/admin/catalogue',{revision:c.data.revision,products:original.products});assert.equal(restored.status,200);assert.equal((await req('/api/admin/settings',settings)).status,200);}
+fs.mkdirSync('../analysis/shop-2026-11-05',{recursive:true});fs.writeFileSync('../analysis/shop-2026-11-05/integration-results.json',JSON.stringify({checks,passed:checks.length,scope:'Local DEV only, fictional test data, no CRM or payment calls'},null,2));console.log(checks.length+' checks passed; original catalogue/settings restored.');

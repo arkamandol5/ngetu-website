@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793207356452,
+      "tag": "0000_boring_arachne",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793207746162,
+      "tag": "0001_unknown_young_avengers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793945889489,
+      "tag": "0002_empty_grim_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793946390991,
+      "tag": "0003_modern_carmella_unuscione",
+      "breakpoints": true
+    }
+  ]
+}

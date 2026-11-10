@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {validateCatalogue,quoteSnapshot,catalogueHTML} from '../lib/catalogue.mjs';
+const seed=JSON.parse(fs.readFileSync(new URL('../lib/catalogue-seed.json',import.meta.url)));
+const product={...seed[0],kind:'product',sku:'QA-001',priceCents:12500,tax:'incl'};
+test('seed ranges never invent prices or stock',()=>{assert.deepEqual(validateCatalogue(seed),seed);assert.ok(seed.every(p=>p.priceCents===null&&p.availability==='Confirm availability'));});
+test('prices require exact SKUs and VAT basis',()=>{for(const change of [{sku:''},{tax:''},{kind:'range'},{priceCents:-1},{priceCents:1.1},{priceCents:'100'}])assert.throws(()=>validateCatalogue([{...product,...change}]));assert.equal(validateCatalogue([product])[0].priceCents,12500);});
+test('catalogue rejects duplicate IDs, unsafe images and false range stock',()=>{assert.throws(()=>validateCatalogue([product,product]));assert.equal(validateCatalogue([{...product,image:'https://tracker.test/p.png'}])[0].image,'');assert.throws(()=>validateCatalogue([{...seed[0],availability:'Available to order'}]));});
+test('manufacturer links cannot execute script or impersonate domains',()=>{for(const source of ['javascript:alert(1)','https://sagola.com.evil.test/x','https://user:pass@sagola.com/'])assert.throws(()=>validateCatalogue([{...product,source}]));});
+test('quote snapshot ignores client names and prices',()=>{const [line]=quoteSnapshot([{id:product.id,quantity:2,name:'FAKE',unitPriceCents:1,configuration:'1.3 mm'}],[product]);assert.equal(line.name,product.name);assert.equal(line.unitPriceCents,12500);assert.equal(line.lineTotalCents,25000);assert.equal(line.configuration,'1.3 mm');});
+test('quote rejects missing, unpublished, duplicate and invalid quantities',()=>{for(const quantity of [0,-1,100,1.5,'2',null])assert.throws(()=>quoteSnapshot([{id:product.id,quantity}],[product]));assert.throws(()=>quoteSnapshot([{id:'missing',quantity:1}],[product]));assert.throws(()=>quoteSnapshot([{id:product.id,quantity:1}],[{...product,published:false}]));assert.throws(()=>quoteSnapshot([{id:product.id,quantity:1},{id:product.id,quantity:1}],[product]));});
+test('unlisted quote can be requested without a basket',()=>assert.deepEqual(quoteSnapshot([],seed),[]));
+test('stored user-facing catalogue strings are escaped',()=>{const html=catalogueHTML([{...product,name:'<img src=x onerror=alert(1)>',description:'<script>alert(1)</script>'}],null);assert.ok(!html.includes('<script>'));assert.match(html,/&lt;script&gt;/);});
