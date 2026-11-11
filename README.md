@@ -7,7 +7,7 @@ Edit the website on `main`. Plesk serves the generated `plesk` branch. This repo
 1. Under **Websites & Domains → ngetu.co.za**, create an empty folder inside this site's directory, for example `ngetu.co.za/public-web`. Set this domain's **Hosting Settings → Document root** to that folder. This keeps previously uploaded source files and the old Default.aspx outside the public folder. Confirm the path shown for this subscription.
 2. Choose **Get Started → Deploy using Git**. Choose a *remote* repository and paste `https://github.com/arkamandol5/ngetu-website.git`. Start with **No deployment** until you can select the branch.
 3. Open **Change branch and path**, select **plesk**, and select the same empty document root. Choose **Manual deployment**, then **Deploy from Repository**. No server build command or GitHub password is required.
-4. Open the homepage, a service page, search, and the Sagola shop. The content pages run in IIS. The shop, checkout, reviews and staff sign-in continue on the hosted NGETU application, which supplies the database, file storage and authenticated APIs. These journeys change the browser address to the hosted application. Content edited in that application's CMS must also be incorporated in source to update the Plesk pages.
+4. Open the homepage, a service page, search, and the Sagola shop. The review form, shop, product pages, basket and checkout information all run on the NGETU domain. Customers can download a review or quote request and email it to Kenneth. Staff use their private Sites bookmark for administration. Plesk renders the catalogue from lib/catalogue-seed.json. Live transactions and automatic enquiry delivery require a same-domain backend integration before activation.
 5. For the public domain, verify the site's assigned IP in Plesk and point the root A record(s) to that IP only. A www CNAME to ngetu.co.za can follow it. Issue/verify HTTPS for both names and preserve Microsoft 365 mail records.
 
 Hosting instructions: https://docs.plesk.com/en-US/obsidian/customer-guide/git-support/using-remote-git-hosting.75848/
@@ -22,7 +22,7 @@ Edit the templates in `homepage.html`, `build.py`, `experience.py`, and `content
     git push origin main
     bash scripts/publish-plesk.sh
 
-The publish script requires Python 3.9+, Git, Bash, rsync and GitHub push access. In Plesk, click **Pull Updates** and **Deploy from Repository**. To preview the generated pages locally, run `python3 -m http.server --bind 127.0.0.1 --directory .generated/plesk 8000` and open http://127.0.0.1:8000/.
+The publish script requires Node 22.13+, Python 3.9+, Git, Bash, rsync and GitHub push access. In Plesk, click **Pull Updates** and **Deploy from Repository**. To preview the generated pages locally, run `python3 -m http.server --bind 127.0.0.1 --directory .generated/plesk 8000` and open http://127.0.0.1:8000/.
 
 ## Backend and launch
 

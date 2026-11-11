@@ -5,7 +5,7 @@ import {bcReady} from './business-central.mjs';
 import seed from './editor-seed.json';
 import pages from './pages.json';
 import catalogueSeed from './catalogue-seed.json';
-import {validateCatalogue,quoteSnapshot,catalogueHTML} from './catalogue.mjs';
+import {validateCatalogue,quoteSnapshot,renderShopPage} from './catalogue.mjs';
 async function catalogue(){const row=await db().prepare('SELECT value FROM settings WHERE key=?').bind('catalogue').first();return row?JSON.parse(row.value):{revision:0,products:catalogueSeed};}
 import {cleanText,escapeHTML,validateEnquiry,validateDocument,renderDocument,safeAsset,dataversePayload} from './domain.mjs';
 // Older CMS revisions stay in the private archive. Only current offerings can be published.
@@ -84,7 +84,7 @@ export async function render(request:Request){const url=new URL(request.url);let
  let shopItems:any[]=[];let selected:any=null;if(shopRoute){shopItems=(await catalogue()).products.filter((p:any)=>p.published);if(route!=='/sagola-shop/')selected=shopItems.find(p=>route==='/sagola-shop/'+p.id+'/');}
  const shopExists=shopRoute&&(route==='/sagola-shop/'||Boolean(selected));const exists=Boolean(shopExists||(pages as any)[route]||document);let output=shopExists?(pages as any)['/sagola-shop/']:(pages as any)[route]||(document?(pages as any)['/paint-waste/']:(pages as any)['/404.html']);if(document){const doc=JSON.parse(document);output=renderDocument(output,doc);if(!(slug in seed)){output=output.replace(/<section class="section related">[\s\S]*?<\/section>/,'');output=output.replace(/<div class="breadcrumb">[\s\S]*?<\/div>/,'<div class="breadcrumb"><a href="/">Home</a><span>/</span>'+escapeHTML(doc.title)+'</div>');}}
 
- if(shopExists){output=output.replace('<!--shop:catalogue-->',catalogueHTML(shopItems,selected));if(selected){output=output.replace(/<div class="shop-section-heading"><div>[\s\S]*?<\/div>/,'<div class="shop-section-heading">').replace(/<p class="shop-intro">[\s\S]*?<\/p>/,'');output=output.replace(/<section class="shop-hero">[\s\S]*?<\/section>/,'');output=output.replace(/<title>[\s\S]*?<\/title>/,'<title>'+escapeHTML(selected.name)+' | NGETU Sagola shop</title>');output=output.replace(/<meta name="description" content="[^"]*">/,'<meta name="description" content="'+escapeHTML(selected.description)+'">');}}
+ if(shopExists) output = renderShopPage(output, shopItems, selected);
  if(route==='/insights/'){
   const entries=new Map(Object.entries(seed).filter(([slug,p]:any)=>p.kind==='insight').map(([slug,p]:any)=>[slug,p]));
   const published=(await db().prepare('SELECT slug,published FROM content WHERE published IS NOT NULL').all()).results;
